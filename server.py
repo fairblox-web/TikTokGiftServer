@@ -7,8 +7,7 @@ app = Flask(__name__)
 # --------------------------------------------------------
 # 🧠 เชื่อมต่อ MongoDB (ใช้ข้อมูลของคุณ)
 # --------------------------------------------------------
-MONGO_URI = "mongodb+srv://admin:1212312121xD@cluster0.c7ckxgy.mongodb.net/?appName=Cluster0"
-
+MONGO_URI = os.getenv("MONGO_URI")
 try:
     client = MongoClient(MONGO_URI)
     db = client["TikTokGiftsDB"]          # ชื่อ Database
