@@ -18,7 +18,7 @@ keys_col = db["keys"]
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Fairblox123xD")
 
 # ==========================================================
-# 🎁 ระบบของขวัญเดิม
+# 🎁 ระบบของขวัญ
 # ==========================================================
 @app.route("/tiktok-event", methods=["POST"])
 def tiktok_event():
@@ -38,6 +38,7 @@ def get_latest():
     gifts_col.delete_many({})
     return jsonify(docs)
 
+
 # ==========================================================
 # 🔐 ระบบ Key Manager
 # ==========================================================
@@ -49,12 +50,17 @@ def verify_key():
 
     record = keys_col.find_one({"key": key})
     if not record:
-        return jsonify({"success": False, "message": "❌ ไม่พบคีย์นี้ในระบบ"})
+        return jsonify({"success": False, "message": "❌ ไม่พบคีย์นี้ในระบบ", "valid": False})
+
+    # ✅ ป้องกัน timezone error
+    exp = record.get("expiresAt")
+    if exp and exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
 
     # ตรวจหมดอายุ
-    if datetime.now(timezone.utc) > record["expiresAt"]:
+    if exp and datetime.now(timezone.utc) > exp:
         keys_col.delete_one({"key": key})
-        return jsonify({"success": False, "message": "⏰ คีย์หมดอายุแล้ว"})
+        return jsonify({"success": False, "message": "⏰ คีย์หมดอายุแล้ว", "valid": False})
 
     # ยังไม่เคยใช้
     if not record.get("used"):
@@ -68,28 +74,27 @@ def verify_key():
                 "lastPing": datetime.now(timezone.utc)
             }}
         )
-        return jsonify({"success": True, "message": "✅ ยืนยันคีย์สำเร็จ (ผูกกับบัญชีนี้แล้ว)"})
+        return jsonify({"success": True, "message": "✅ ยืนยันคีย์สำเร็จ (ผูกกับบัญชีนี้แล้ว)", "valid": True})
 
     # ใช้แล้วแต่คนเดิม
     if record.get("boundUserId") == user_id:
         keys_col.update_one({"key": key}, {"$set": {"online": True, "lastPing": datetime.now(timezone.utc)}})
-        return jsonify({"success": True, "message": "✅ ยืนยันคีย์สำเร็จ (บัญชีเดิม)"})
+        return jsonify({"success": True, "message": "✅ ยืนยันคีย์สำเร็จ (บัญชีเดิม)", "valid": True})
 
     # ใช้แล้วแต่คนอื่น
-    return jsonify({"success": False, "message": "🚫 คีย์นี้ถูกใช้ไปแล้ว"})
+    return jsonify({"success": False, "message": "🚫 คีย์นี้ถูกใช้ไปแล้ว", "valid": False})
 
 
-@app.route("/update-online", methods=["POST"])
-def update_online():
+@app.route("/ping", methods=["POST"])
+def ping_key():
     data = request.get_json(force=True)
     key = data.get("key")
-    user_id = data.get("user_id")
-
     record = keys_col.find_one({"key": key})
-    if record and record.get("boundUserId") == user_id:
+    if record:
         keys_col.update_one({"key": key}, {"$set": {"lastPing": datetime.now(timezone.utc), "online": True}})
         return jsonify({"status": "pong"})
     return jsonify({"status": "fail"})
+
 
 # ==========================================================
 # 🧹 ลบคีย์หมดอายุอัตโนมัติ
@@ -103,20 +108,22 @@ def cleanup_expired_keys():
             print(f"🗑️ ลบคีย์หมดอายุ: {key['key']}")
         time.sleep(600)  # ทุก 10 นาที
 
+
 cleanup_thread = threading.Thread(target=cleanup_expired_keys, daemon=True)
 cleanup_thread.start()
 
+
 # ==========================================================
-# 🧭 หน้า Admin Panel (UI สวยงาม)
+# 🧭 หน้า Admin Panel (UI เดิม)
 # ==========================================================
 HTML_ADMIN = """
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Admin Panel</title>
+  <title>Fairblox Admin Panel</title>
   <style>
-    body { background:#111; color:#eee; font-family:sans-serif; }
+    body { background:#111; color:#eee; font-family:sans-serif; text-align:center; }
     h1 { color:#4CAF50; }
     table { border-collapse:collapse; width:100%; margin-top:20px; }
     th,td { border:1px solid #333; padding:8px; text-align:center; }
@@ -167,6 +174,7 @@ HTML_ADMIN = """
 </html>
 """
 
+
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     password = request.args.get("password")
@@ -177,23 +185,16 @@ def admin_panel():
     keys = []
     for k in keys_col.find():
         exp = k.get("expiresAt")
-
-        # ✅ แก้ timezone ถ้าไม่มีให้เพิ่ม
         if exp and exp.tzinfo is None:
             exp = exp.replace(tzinfo=timezone.utc)
 
-        remaining_td = exp - now if exp else timedelta(0)
-        remaining_str = f"{remaining_td.days} วัน" if remaining_td.days > 0 else "หมดอายุแล้ว"
+        remaining = exp - now if exp else timedelta(0)
+        remaining_str = f"{remaining.days} วัน" if remaining.days > 0 else "หมดอายุแล้ว"
 
-        # 🧠 ตรวจสถานะออนไลน์
-        online = False
-        last_ping = k.get("lastPing")
-        if last_ping:
-            if last_ping.tzinfo is None:
-                last_ping = last_ping.replace(tzinfo=timezone.utc)
-            if (now - last_ping).total_seconds() < 300:
-                online = True
-            else:
+        # อัปเดตสถานะออนไลน์ (ถ้าเกิน 5 นาทีถือว่าออฟไลน์)
+        if k.get("lastPing"):
+            if (now - k["lastPing"]).total_seconds() > 300:
+                k["online"] = False
                 keys_col.update_one({"key": k["key"]}, {"$set": {"online": False}})
 
         keys.append({
@@ -202,10 +203,11 @@ def admin_panel():
             "remaining": remaining_str,
             "used": k.get("used", False),
             "boundUserId": k.get("boundUserId"),
-            "online": online
+            "online": k.get("online", False)
         })
 
     return render_template_string(HTML_ADMIN, valid=True, keys=keys, password=password)
+
 
 @app.route("/create-key", methods=["POST"])
 def create_key():
@@ -227,6 +229,7 @@ def create_key():
     })
     return "<script>location.href=document.referrer;</script>"
 
+
 @app.route("/delete-key", methods=["POST"])
 def delete_key():
     password = request.form.get("password")
@@ -236,12 +239,14 @@ def delete_key():
     keys_col.delete_one({"key": key})
     return "<script>location.href=document.referrer;</script>"
 
+
 # ==========================================================
 # ✅ Run Server
 # ==========================================================
 @app.route("/")
 def home():
     return "✅ TikTok Gift + Key Server is running!"
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3000)
