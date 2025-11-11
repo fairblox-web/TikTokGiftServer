@@ -179,23 +179,36 @@ def admin_panel():
     if password != ADMIN_PASSWORD:
         return render_template_string(HTML_ADMIN, valid=False)
 
-    now = datetime.now(timezone.utc)
+  now = datetime.now(timezone.utc)
     keys = []
     for k in keys_col.find():
-        remaining = k["expiresAt"] - now
-        remaining_str = f"{remaining.days} วัน" if remaining.days > 0 else "หมดอายุแล้ว"
-        # อัปเดตสถานะออนไลน์ (ถ้าเกิน 5 นาทีถือว่าออฟไลน์)
-        if k.get("lastPing"):
-            if (now - k["lastPing"]).total_seconds() > 300:
-                k["online"] = False
+        exp = k.get("expiresAt")
+
+        # 🧩 แก้ timezone — ถ้า expiresAt ไม่มี timezone ให้เติมเข้าไป
+        if exp and exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+
+        remaining_td = exp - now if exp else timedelta(0)
+        remaining_str = f"{remaining_td.days} วัน" if remaining_td.days > 0 else "หมดอายุแล้ว"
+
+        # 🧠 ตรวจสถานะออนไลน์
+        online = False
+        last_ping = k.get("lastPing")
+        if last_ping:
+            if last_ping.tzinfo is None:
+                last_ping = last_ping.replace(tzinfo=timezone.utc)
+            if (now - last_ping).total_seconds() < 300:
+                online = True
+            else:
                 keys_col.update_one({"key": k["key"]}, {"$set": {"online": False}})
+
         keys.append({
             "key": k["key"],
-            "expiresAt": k["expiresAt"].strftime("%Y-%m-%d %H:%M"),
+            "expiresAt": exp.strftime("%Y-%m-%d %H:%M") if exp else "-",
             "remaining": remaining_str,
             "used": k.get("used", False),
             "boundUserId": k.get("boundUserId"),
-            "online": k.get("online", False)
+            "online": online
         })
 
     return render_template_string(HTML_ADMIN, valid=True, keys=keys, password=password)
