@@ -114,7 +114,7 @@ cleanup_thread.start()
 
 
 # ==========================================================
-# 🧭 หน้า Admin Panel (UI เดิม)
+# 🧭 หน้า Admin Panel
 # ==========================================================
 HTML_ADMIN = """
 <!DOCTYPE html>
@@ -130,6 +130,7 @@ HTML_ADMIN = """
     tr:nth-child(even){background-color:#1e1e1e;}
     .ok { color:#4CAF50; }
     .bad { color:#f44336; }
+    .expired { background-color:#330000; color:#f44336; }
     button { background:#333; color:#fff; border:none; padding:6px 10px; cursor:pointer; }
     button:hover { background:#4CAF50; }
   </style>
@@ -152,7 +153,7 @@ HTML_ADMIN = """
   <table>
     <tr><th>คีย์</th><th>วันหมดอายุ</th><th>เหลือเวลา</th><th>สถานะ</th><th>ผู้ใช้</th><th>ออนไลน์</th><th>ลบ</th></tr>
     {% for k in keys %}
-      <tr>
+      <tr class="{{ 'expired' if k.remaining == 'หมดอายุแล้ว' }}">
         <td>{{k.key}}</td>
         <td>{{k.expiresAt}}</td>
         <td>{{k.remaining}}</td>
@@ -184,21 +185,33 @@ def admin_panel():
     now = datetime.now(timezone.utc)
     keys = []
     for k in keys_col.find():
+        # ✅ ป้องกัน timezone error
         exp = k.get("expiresAt")
-        if exp and exp.tzinfo is None:
-            exp = exp.replace(tzinfo=timezone.utc)
+        if exp:
+            try:
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+            except Exception:
+                exp = None
 
-        remaining = exp - now if exp else timedelta(0)
-        remaining_str = f"{remaining.days} วัน" if remaining.days > 0 else "หมดอายุแล้ว"
+        # ✅ คำนวณเวลาเหลือ
+        if exp:
+            remaining = exp - now
+            remaining_str = f"{remaining.days} วัน" if remaining.days > 0 else "หมดอายุแล้ว"
+        else:
+            remaining_str = "-"
 
-        # อัปเดตสถานะออนไลน์ (ถ้าเกิน 5 นาทีถือว่าออฟไลน์)
-        if k.get("lastPing"):
-            if (now - k["lastPing"]).total_seconds() > 300:
+        # ✅ ตรวจสถานะออนไลน์ (เกิน 5 นาทีถือว่าออฟไลน์)
+        last_ping = k.get("lastPing")
+        if last_ping and isinstance(last_ping, datetime):
+            if last_ping.tzinfo is None:
+                last_ping = last_ping.replace(tzinfo=timezone.utc)
+            if (now - last_ping).total_seconds() > 300:
                 k["online"] = False
                 keys_col.update_one({"key": k["key"]}, {"$set": {"online": False}})
 
         keys.append({
-            "key": k["key"],
+            "key": k.get("key", "-"),
             "expiresAt": exp.strftime("%Y-%m-%d %H:%M") if exp else "-",
             "remaining": remaining_str,
             "used": k.get("used", False),
