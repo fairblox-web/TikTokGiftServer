@@ -1,83 +1,80 @@
 from flask import Flask, request, jsonify
 from pymongo import MongoClient
-from bson import ObjectId  # ✅ ใช้แปลง _id จาก MongoDB
+from bson import ObjectId
 import os
 import sys
 
 app = Flask(__name__)
 
-# ------------------------------------------------------
-# ✅ โหลด URI ของ MongoDB จาก Environment บน Render
-# ------------------------------------------------------
+# ==============================================================
+# ⚙️ เชื่อมต่อ MongoDB (ใช้ URI จาก Render Environment Variable)
+# ==============================================================
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
-    print("❌ ไม่พบตัวแปร MONGO_URI ใน Environment")
+    print("❌ ERROR: MONGO_URI not found in environment variables.")
     sys.exit(1)
 
-# ------------------------------------------------------
-# ✅ เชื่อมต่อกับ MongoDB
-# ------------------------------------------------------
 try:
     client = MongoClient(MONGO_URI)
-    db = client["TikTokGiftsDB"]          # ชื่อฐานข้อมูล
-    gifts_collection = db["gifts"]        # ชื่อคอลเล็กชัน
-    print("✅ Connected to MongoDB successfully")
+    db = client["TikTokGiftsDB"]
+    gifts_collection = db["gifts"]
+    print("✅ Connected to MongoDB successfully!")
 except Exception as e:
     print("❌ MongoDB connection failed:", e)
     sys.exit(1)
 
-# ------------------------------------------------------
-# ✅ ตัวแปรเก็บของขวัญล่าสุด (ใช้สำหรับ Roblox)
-# ------------------------------------------------------
-latest_gifts = []
-
-# ------------------------------------------------------
-# ✅ Route: รับ webhook จาก TikFinity
-# ------------------------------------------------------
-@app.route('/tiktok-event', methods=['POST'])
+# ==============================================================
+# 📥 Route: รับข้อมูลจาก TikFinity (POST /tiktok-event)
+# ==============================================================
+@app.route("/tiktok-event", methods=["POST"])
 def tiktok_event():
-    global latest_gifts
     try:
         if request.is_json:
             data = request.get_json()
         else:
             data = request.form.to_dict()
 
-        print("🎁 ได้รับข้อมูลจาก TikFinity:", data, flush=True)
+        print("🎁 ได้รับข้อมูลจาก TikFinity:", data)
 
         # บันทึกลง MongoDB
         gifts_collection.insert_one(data)
-        latest_gifts.append(data)
-
+        print("✅ บันทึกของขวัญลง MongoDB สำเร็จ!")
         return jsonify({"status": "ok"}), 200
+
     except Exception as e:
-        print("❌ เกิดข้อผิดพลาดตอนบันทึก MongoDB:", e)
+        print("❌ Error saving data to MongoDB:", e)
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ------------------------------------------------------
-# ✅ Route: สำหรับ Roblox เรียกดูของขวัญล่าสุด
-# ------------------------------------------------------
-@app.route('/get-latest-gifts', methods=['GET'])
+# ==============================================================
+# 📤 Route: Roblox ดึงข้อมูลล่าสุด (GET /get-latest-gifts)
+# ==============================================================
+@app.route("/get-latest-gifts", methods=["GET"])
 def get_latest_gifts():
     try:
+        # ดึงข้อมูลของขวัญล่าสุดจาก MongoDB (10 รายการล่าสุด)
+        gifts = list(gifts_collection.find().sort("_id", -1).limit(10))
         gifts_to_send = []
-        for gift in gifts_collection.find().sort("_id", -1).limit(20):  # ส่ง 20 ชิ้นล่าสุด
-            gift['_id'] = str(gift['_id'])  # ✅ แปลง ObjectId เป็น string
+
+        for gift in gifts:
+            gift["_id"] = str(gift["_id"])
             gifts_to_send.append(gift)
-        return jsonify(gifts_to_send), 200
+
+        # 🔥 ลบของขวัญเก่าออกหลังส่งให้ Roblox แล้ว
+        if gifts_to_send:
+            gift_ids = [g["_id"] for g in gifts_to_send]
+            gifts_collection.delete_many({"_id": {"$in": [ObjectId(id) for id in gift_ids]}})
+            print(f"🧹 ลบของขวัญเก่าจำนวน {len(gift_ids)} ชิ้นออกจากฐานข้อมูลแล้ว")
+
+        return jsonify(gifts_to_send)
+
     except Exception as e:
-        print("❌ เกิดข้อผิดพลาดตอนดึงข้อมูล:", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        print("❌ Error fetching gifts:", e)
+        return jsonify({"error": str(e)}), 500
 
-# ------------------------------------------------------
-# ✅ Route พื้นฐานตรวจว่าเซิร์ฟเวอร์ออนไลน์ไหม
-# ------------------------------------------------------
-@app.route('/')
-def index():
-    return jsonify({"status": "server is live"}), 200
-
-# ------------------------------------------------------
-# ✅ เริ่มรัน Flask
-# ------------------------------------------------------
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000)
+# ==============================================================
+# 🚀 เริ่มรัน Flask Server
+# ==============================================================
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 3000))
+    print(f"🌐 Starting Flask server on port {port} ...")
+    app.run(host="0.0.0.0", port=port)
