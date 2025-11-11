@@ -17,7 +17,6 @@ keys_col = db["keys"]
 # ✅ Admin password (ตั้งใน Render Environment Variable)
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Fairblox123xD")
 
-
 # ==========================================================
 # 🎁 ระบบของขวัญเดิม
 # ==========================================================
@@ -38,7 +37,6 @@ def get_latest():
     docs = list(gifts_col.find({}, {"_id": 0}))
     gifts_col.delete_many({})
     return jsonify(docs)
-
 
 # ==========================================================
 # 🔐 ระบบ Key Manager
@@ -93,7 +91,6 @@ def update_online():
         return jsonify({"status": "pong"})
     return jsonify({"status": "fail"})
 
-
 # ==========================================================
 # 🧹 ลบคีย์หมดอายุอัตโนมัติ
 # ==========================================================
@@ -106,13 +103,11 @@ def cleanup_expired_keys():
             print(f"🗑️ ลบคีย์หมดอายุ: {key['key']}")
         time.sleep(600)  # ทุก 10 นาที
 
-
 cleanup_thread = threading.Thread(target=cleanup_expired_keys, daemon=True)
 cleanup_thread.start()
 
-
 # ==========================================================
-# 🧭 หน้า Admin Panel
+# 🧭 หน้า Admin Panel (UI สวยงาม)
 # ==========================================================
 HTML_ADMIN = """
 <!DOCTYPE html>
@@ -172,19 +167,18 @@ HTML_ADMIN = """
 </html>
 """
 
-
 @app.route("/admin", methods=["GET"])
 def admin_panel():
     password = request.args.get("password")
     if password != ADMIN_PASSWORD:
         return render_template_string(HTML_ADMIN, valid=False)
 
-  now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
     keys = []
     for k in keys_col.find():
         exp = k.get("expiresAt")
 
-        # 🧩 แก้ timezone — ถ้า expiresAt ไม่มี timezone ให้เติมเข้าไป
+        # ✅ แก้ timezone ถ้าไม่มีให้เพิ่ม
         if exp and exp.tzinfo is None:
             exp = exp.replace(tzinfo=timezone.utc)
 
@@ -213,7 +207,6 @@ def admin_panel():
 
     return render_template_string(HTML_ADMIN, valid=True, keys=keys, password=password)
 
-
 @app.route("/create-key", methods=["POST"])
 def create_key():
     password = request.form.get("password")
@@ -234,7 +227,6 @@ def create_key():
     })
     return "<script>location.href=document.referrer;</script>"
 
-
 @app.route("/delete-key", methods=["POST"])
 def delete_key():
     password = request.form.get("password")
@@ -243,7 +235,6 @@ def delete_key():
     key = request.form.get("key")
     keys_col.delete_one({"key": key})
     return "<script>location.href=document.referrer;</script>"
-
 
 # ==========================================================
 # ✅ Run Server
